@@ -1,7 +1,11 @@
 #include <algorithm>
 #include <string>
 #include <set>
+#ifdef IMGUI_COLORTEXTEDITOR_NO_BOOST
+#include <regex>
+#else
 #include <boost/regex.hpp>
+#endif
 
 #include "TextEditor.h"
 
@@ -10,17 +14,20 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h" // for imGui::GetCurrentWindow()
 
-
+#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 struct TextEditor::RegexList {
     std::vector<std::pair<boost::regex, TextEditor::PaletteIndex>> mValue;
 };
+#endif
 
 
 // --------------------------------------- //
 // ------------- Exposed API ------------- //
 
 TextEditor::TextEditor()
+#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
     : mRegexList(std::make_shared<RegexList>())
+#endif
 {
 	SetPalette(defaultPalette);
 	mLines.push_back(Line());
@@ -58,8 +65,20 @@ void TextEditor::SetPalette(PaletteId aValue)
 	}
 }
 
+void TextEditor::SetPalette(const Palette& aValue)
+{
+	/* Update palette with the current alpha from style */
+	for (int i = 0; i < (int)PaletteIndex::Max; ++i)
+	{
+		ImVec4 color = U32ColorToVec4(aValue[i]);
+		color.w *= ImGui::GetStyle().Alpha;
+		mPalette[i] = ImGui::ColorConvertFloat4ToU32(color);
+	}
+}
+
 void TextEditor::SetLanguageDefinition(LanguageDefinitionId aValue)
 {
+#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 	mLanguageDefinitionId = aValue;
 	switch (mLanguageDefinitionId)
 	{
@@ -98,9 +117,26 @@ void TextEditor::SetLanguageDefinition(LanguageDefinitionId aValue)
 		break;
 	}
 
-    mRegexList->mValue.clear();
+	#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
+	mRegexList->mValue.clear();
 	for (const auto& r : mLanguageDefinition->mTokenRegexStrings)
-        mRegexList->mValue.push_back(std::make_pair(boost::regex(r.first, boost::regex_constants::optimize), r.second));
+		mRegexList->mValue.push_back(std::make_pair(boost::regex(r.first, boost::regex_constants::optimize), r.second));
+	#endif
+
+	Colorize();
+#endif
+}
+
+void TextEditor::SetLanguageDefinition(const LanguageDefinition& aValue)
+{
+	mLanguageDefinitionId = LanguageDefinitionId::None;
+	mLanguageDefinition = &aValue;
+
+	#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
+	mRegexList->mValue.clear();
+	for (const auto& r : mLanguageDefinition->mTokenRegexStrings)
+		mRegexList->mValue.push_back(std::make_pair(boost::regex(r.first, boost::regex_constants::optimize), r.second));
+	#endif
 
 	Colorize();
 }
@@ -292,6 +328,16 @@ void TextEditor::Paste()
 		UndoRecord u;
 		u.mBefore = mState;
 
+		#ifdef IMGUI_COLORTEXTEDITOR_NO_BOOST
+		// Replace 4 spaces with tabs
+		if (mForceUseTabsForIndentation && clipText.find("    ") != std::string::npos)
+		{
+			std::string clipTextSpaces = clipText;
+			clipTextSpaces = std::regex_replace(clipTextSpaces, std::regex("    "), "\t");
+			clipText = clipTextSpaces;
+		}
+		#endif
+
 		if (AnyCursorHasSelection())
 		{
 			for (int c = mState.mCurrentCursor; c > -1; c--)
@@ -320,18 +366,21 @@ void TextEditor::Paste()
 		u.mAfter = mState;
 		AddUndo(u);
 	}
+	mTextChanged = true;
 }
 
 void TextEditor::Undo(int aSteps)
 {
 	while (CanUndo() && aSteps-- > 0)
 		mUndoBuffer[--mUndoIndex].Undo(this);
+	mTextChanged = true;
 }
 
 void TextEditor::Redo(int aSteps)
 {
 	while (CanRedo() && aSteps-- > 0)
 		mUndoBuffer[mUndoIndex++].Redo(this);
+	mTextChanged = true;
 }
 
 void TextEditor::SetText(const std::string& aText)
@@ -357,6 +406,7 @@ void TextEditor::SetText(const std::string& aText)
 	mUndoIndex = 0;
 
 	Colorize();
+	mTextChanged = true;
 }
 
 std::string TextEditor::GetText() const
@@ -366,6 +416,17 @@ std::string TextEditor::GetText() const
 	Coordinates startCoords = Coordinates();
 	Coordinates endCoords = Coordinates(lastLine, lastLineLength);
 	return startCoords < endCoords ? GetText(startCoords, endCoords) : "";
+}
+
+std::string TextEditor::GetLine(int aLine) const
+{
+	if (mLines.size() <= aLine) return "";
+	auto& line = mLines[aLine];
+	std::string result;
+	result.resize(line.size());
+	for (size_t i = 0; i < line.size(); ++i)
+		result[i] = line[i].mChar;
+	return result;
 }
 
 void TextEditor::SetTextLines(const std::vector<std::string>& aLines)
@@ -394,6 +455,7 @@ void TextEditor::SetTextLines(const std::vector<std::string>& aLines)
 	mUndoIndex = 0;
 
 	Colorize();
+	mTextChanged = true;
 }
 
 std::vector<std::string> TextEditor::GetTextLines() const
@@ -422,6 +484,7 @@ bool TextEditor::Render(const char* aTitle, bool aParentIsFocused, const ImVec2&
 	if (mCursorPositionChanged)
 		OnCursorPositionChanged();
 	mCursorPositionChanged = false;
+	mTextChanged = false;
 
 	ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::ColorConvertU32ToFloat4(mPalette[(int)PaletteIndex::Background]));
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
@@ -736,6 +799,7 @@ int TextEditor::InsertTextAt(Coordinates& /* inout */ aWhere, const char* aValue
 		}
 	}
 
+	mTextChanged = true;
 	return totalLines;
 }
 
@@ -971,7 +1035,7 @@ void TextEditor::EnterCharacter(ImWchar aChar, bool aShift)
 			anyCursorHasMultilineSelection = true;
 			break;
 		}
-	bool isIndentOperation = hasSelection && anyCursorHasMultilineSelection && aChar == '\t';
+	bool isIndentOperation = ((hasSelection && anyCursorHasMultilineSelection) || aShift) && aChar == '\t';
 	if (isIndentOperation)
 	{
 		ChangeCurrentLinesIndentation(!aShift);
@@ -1024,6 +1088,11 @@ void TextEditor::EnterCharacter(ImWchar aChar, bool aShift)
 		}
 		else
 		{
+			if (mForceUseTabsForIndentation && aChar == ' ')
+			{// Add a tab instead of a space, if we're at the beginning of the line or if the previous character was a tab
+				auto cindex = GetCharacterIndexR(coord);
+				if (cindex == 0 || mLines[coord.mLine][cindex - 1].mChar == '\t') aChar = '\t';
+			}
 			char buf[7];
 			int e = ImTextCharToUtf8(buf, 7, aChar);
 			if (e > 0)
@@ -1044,6 +1113,7 @@ void TextEditor::EnterCharacter(ImWchar aChar, bool aShift)
 
 		added.mEnd = GetSanitizedCursorCoordinates(c);
 		u.mOperations.push_back(added);
+		mTextChanged = true;
 	}
 
 	u.mAfter = mState;
@@ -1351,6 +1421,7 @@ void TextEditor::ChangeCurrentLinesIndentation(bool aIncrease)
 
 	if (u.mOperations.size() > 0)
 		AddUndo(u);
+	mTextChanged = true;
 }
 
 void TextEditor::MoveUpCurrentLines()
@@ -1394,6 +1465,7 @@ void TextEditor::MoveUpCurrentLines()
 	u.mOperations.push_back({ GetText(start, end), start, end, UndoOperationType::Add });
 	u.mAfter = mState;
 	AddUndo(u);
+	mTextChanged = true;
 }
 
 void TextEditor::MoveDownCurrentLines()
@@ -1438,6 +1510,7 @@ void TextEditor::MoveDownCurrentLines()
 	u.mOperations.push_back({ GetText(start, end), start, end, UndoOperationType::Add });
 	u.mAfter = mState;
 	AddUndo(u);
+	mTextChanged = true;
 }
 
 void TextEditor::ToggleLineComment()
@@ -1506,6 +1579,7 @@ void TextEditor::ToggleLineComment()
 
 	u.mAfter = mState;
 	AddUndo(u);
+	mTextChanged = true;
 }
 
 void TextEditor::RemoveCurrentLines()
@@ -1803,6 +1877,7 @@ TextEditor::Line& TextEditor::InsertLine(int aIndex)
 			SetCursorPosition({ mState.mCursors[c].mInteractiveEnd.mLine + 1, mState.mCursors[c].mInteractiveEnd.mColumn }, c);
 	}
 
+	mTextChanged = true;
 	return result;
 }
 
@@ -1823,6 +1898,7 @@ void TextEditor::RemoveLine(int aIndex, const std::unordered_set<int>* aHandledC
 				SetCursorPosition({ mState.mCursors[c].mInteractiveEnd.mLine - 1, mState.mCursors[c].mInteractiveEnd.mColumn }, c);
 		}
 	}
+	mTextChanged = true;
 }
 
 void TextEditor::RemoveLines(int aStart, int aEnd)
@@ -1850,6 +1926,7 @@ void TextEditor::RemoveLines(int aStart, int aEnd)
 			mState.mCursors[c].mInteractiveStart.mLine = targetLine;
 		}
 	}
+	mTextChanged = true;
 }
 
 void TextEditor::DeleteRange(const Coordinates& aStart, const Coordinates& aEnd)
@@ -2031,9 +2108,9 @@ void TextEditor::HandleKeyboardInputs(bool aParentIsFocused)
 			ChangeCurrentLinesIndentation(false);
 		else if (!mReadOnly && !alt && ctrl && !shift && !super && ImGui::IsKeyPressed(ImGuiKey_RightBracket))
 			ChangeCurrentLinesIndentation(true);
-		else if (!alt && ctrl && shift && !super && ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+		else if (!mReadOnly && !alt && ctrl && shift && !super && ImGui::IsKeyPressed(ImGuiKey_UpArrow))
 			MoveUpCurrentLines();
-		else if (!alt && ctrl && shift && !super && ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+		else if (!mReadOnly && !alt && ctrl && shift && !super && ImGui::IsKeyPressed(ImGuiKey_DownArrow))
 			MoveDownCurrentLines();
 		else if (!mReadOnly && !alt && ctrl && !shift && !super && ImGui::IsKeyPressed(ImGuiKey_Slash))
 			ToggleLineComment();
@@ -2057,7 +2134,7 @@ void TextEditor::HandleKeyboardInputs(bool aParentIsFocused)
 			EnterCharacter('\n', false);
 		else if (!mReadOnly && !alt && !ctrl && !super && ImGui::IsKeyPressed(ImGuiKey_Tab))
 			EnterCharacter('\t', shift);
-		if (!mReadOnly && !io.InputQueueCharacters.empty() && !(ctrl && !alt) && !super) // See https://github.com/santaclose/ImGuiColorTextEdit/pull/34
+		if (!mReadOnly && !io.InputQueueCharacters.empty() && !super)
 		{
 			for (int i = 0; i < io.InputQueueCharacters.Size; i++)
 			{
@@ -2255,6 +2332,7 @@ void TextEditor::Render(bool aParentIsFocused)
 
 			auto& line = mLines[lineNo];
 			maxColumnLimited = Max(GetLineMaxColumn(lineNo, mLastVisibleColumn), maxColumnLimited);
+			bool isBegginingOfLine = true;
 
 			Coordinates lineStartCoord(lineNo, 0);
 			Coordinates lineEndCoord(lineNo, maxColumnLimited);
@@ -2366,16 +2444,19 @@ void TextEditor::Render(bool aParentIsFocused)
 				}
 				else if (glyph.mChar == ' ')
 				{
-					if (mShowWhitespaces)
+					if (mShowWhitespaces || (isBegginingOfLine && mForceUseTabsForIndentation))
 					{
 						const auto s = ImGui::GetFontSize();
 						const auto x = targetGlyphPos.x + spaceSize * 0.5f;
 						const auto y = targetGlyphPos.y + s * 0.5f;
+						if (isBegginingOfLine && mForceUseTabsForIndentation) drawList->AddCircleFilled(ImVec2(x, y), 3.5f, mPalette[(int)PaletteIndex::ErrorMarker], 4);
+						else
 						drawList->AddCircleFilled(ImVec2(x, y), 1.5f, mPalette[(int)PaletteIndex::ControlCharacter], 4);
 					}
 				}
 				else
 				{
+					isBegginingOfLine = false;
 					int seqLength = UTF8CharLength(glyph.mChar);
 					if (mCursorOnBracket && seqLength == 1 && mMatchingBracketCoords == Coordinates{ lineNo, column })
 					{
@@ -2495,6 +2576,7 @@ void TextEditor::OnLineChanged(bool aBeforeChange, int aLine, int aColumn, int a
 		for (auto& item : cursorCharIndices)
 			SetCursorPosition({ aLine, GetCharacterColumn(aLine, item.second) }, item.first);
 	}
+	mTextChanged = true;
 }
 
 void TextEditor::MergeCursorsIfPossible()
@@ -2569,7 +2651,9 @@ void TextEditor::ColorizeRange(int aFromLine, int aToLine)
 		return;
 
 	std::string buffer;
+	#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 	boost::cmatch results;
+	#endif
 	std::string id;
 
 	int endLine = std::max(0, std::min((int)mLines.size(), aToLine));
@@ -2607,6 +2691,7 @@ void TextEditor::ColorizeRange(int aFromLine, int aToLine)
 					hasTokenizeResult = true;
 			}
 
+			#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 			if (hasTokenizeResult == false)
 			{
 				// todo : remove
@@ -2629,6 +2714,7 @@ void TextEditor::ColorizeRange(int aFromLine, int aToLine)
 					}
 				}
 			}
+			#endif
 
 			if (hasTokenizeResult == false)
 			{
