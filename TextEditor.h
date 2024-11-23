@@ -10,7 +10,9 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <map>
+#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 #include <boost/regex.hpp>
+#endif
 #include "imgui.h"
 
 class IMGUI_API TextEditor
@@ -55,6 +57,8 @@ public:
 	inline int GetTabSize() const { return mTabSize; }
 	void SetLineSpacing(float aValue);
 	inline float GetLineSpacing() const { return mLineSpacing;  }
+	bool IsTextChanged() const { return mTextChanged; }
+	std::string GetLine(int aLine = 0) const;
 
 	inline static void SetDefaultPalette(PaletteId aValue) { defaultPalette = aValue; }
 	inline static PaletteId GetDefaultPalette() { return defaultPalette; }
@@ -99,7 +103,7 @@ public:
 	void ImGuiDebugPanel(const std::string& panelName = "Debug");
 	void UnitTests();
 
-private:
+// private:
 	// ------------- Generic utils ------------- //
 
 	static inline ImVec4 U32ColorToVec4(ImU32 in)
@@ -270,7 +274,9 @@ private:
 
 	struct LanguageDefinition
 	{
+		#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 		typedef std::pair<std::string, PaletteIndex> TokenRegexString;
+		#endif
 		typedef bool(*TokenizeCallback)(const char* in_begin, const char* in_end, const char*& out_begin, const char*& out_end, PaletteIndex& paletteIndex);
 
 		std::string mName;
@@ -280,9 +286,12 @@ private:
 		std::string mCommentStart, mCommentEnd, mSingleLineComment;
 		char mPreprocChar = '#';
 		TokenizeCallback mTokenize = nullptr;
+		#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 		std::vector<TokenRegexString> mTokenRegexStrings;
+		#endif
 		bool mCaseSensitive = true;
 
+		#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 		static const LanguageDefinition& Cpp();
 		static const LanguageDefinition& Hlsl();
 		static const LanguageDefinition& Glsl();
@@ -293,6 +302,7 @@ private:
 		static const LanguageDefinition& Lua();
 		static const LanguageDefinition& Cs();
 		static const LanguageDefinition& Json();
+		#endif
 	};
 
 	enum class UndoOperationType { Add, Delete };
@@ -304,7 +314,14 @@ private:
 		UndoOperationType mType;
 	};
 
+	inline void SetForceUseTabsForIndentation(bool aValue) { mForceUseTabsForIndentation = aValue; }
+	inline bool IsForcingTabsForIndentation() const { return mForceUseTabsForIndentation; }
+	void SetLanguageDefinition(const LanguageDefinition& aValue);
+	void SetPalette(const Palette& aValue);
+	
+	#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 	typedef std::vector<std::pair<boost::regex, PaletteIndex>> RegexList;
+	#endif
 
 	class UndoRecord
 	{
@@ -456,7 +473,11 @@ private:
 	Palette mPalette;
 	LanguageDefinitionId mLanguageDefinitionId;
 	const LanguageDefinition* mLanguageDefinition = nullptr;
+	bool mTextChanged = false;
+	bool mForceUseTabsForIndentation = false;
+	#ifndef IMGUI_COLORTEXTEDITOR_NO_BOOST
 	RegexList mRegexList;
+	#endif
 
 	inline bool IsHorizontalScrollbarVisible() const { return mCurrentSpaceWidth > mContentWidth; }
 	inline bool IsVerticalScrollbarVisible() const { return mCurrentSpaceHeight > mContentHeight; }
