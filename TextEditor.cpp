@@ -2139,7 +2139,7 @@ void TextEditor::HandleKeyboardInputs(bool aParentIsFocused)
 			EnterCharacter('\n', false);
 		else if (!mReadOnly && !alt && !ctrl && !super && ImGui::IsKeyPressed(ImGuiKey_Tab))
 			EnterCharacter('\t', shift);
-		if (!mReadOnly && !io.InputQueueCharacters.empty() && ctrl == alt && !super)
+		if (!mReadOnly && !io.InputQueueCharacters.empty() && !super)
 		{
 			for (int i = 0; i < io.InputQueueCharacters.Size; i++)
 			{
